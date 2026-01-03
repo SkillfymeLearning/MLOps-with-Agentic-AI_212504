@@ -1,0 +1,10 @@
+Neural networks can learn complex patterns
+Core building blocks — Neurons, weights, biases, and activation functions
+Layers — How neurons are organized into input, hidden, and output layers
+Forward propagation — How data flows through the network
+Loss functions — How we measure prediction quality
+Backpropagation — How networks learn by computing gradients
+Optimization algorithms — How weights get updated (Adam, SGD, etc.)
+Network architectures — Feedforward, CNNs, RNNs, and Transformers
+Overfitting and regularization — How to build models that generalize
+Training pipeline — The complete process from data to trained model
