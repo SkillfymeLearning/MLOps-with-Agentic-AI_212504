@@ -1,0 +1,13 @@
+docker build -t mlflow-example -f DockerfileMlflow .
+docker build -t mlflow-docker-example -f Dockerfile .
+export MLFLOW_TRACKING_URI=http://localhost:8080
+export MLFLOW_TRACKING_USERNAME=admin
+export MLFLOW_TRACKING_PASSWORD=password@1234
+
+mlflow run . --env-manager local
+
+export MLFLOW_TRACKING_URI=http://localhost:8080 && mlflow run mlflow-project -P alpha=0.5 --docker-args network=mlflow-network
+docker network create mlflow-network
+
+# Run MLflow container
+docker run -d --name mlflow-container --network mlflow-network -p 8080:8080 mlflow-example
