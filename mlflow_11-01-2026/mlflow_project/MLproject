@@ -1,0 +1,21 @@
+name: tutorial
+
+docker_env:
+  image:  mlflow-docker-example:latest
+#   # environment: [["MLFLOW_TRACKING_URI", "http://localhost:8080/"],
+#   #               ["MLFLOW_TRACKING_USERNAME", "admin"],
+#   #               ["MLFLOW_TRACKING_PASSWORD", "password@1234"]]
+  # environment: [["MLFLOW_TRACKING_URI", "http://127.0.0.1:5000/"],
+  #               ["AWS_ACCESS_KEY_ID", "minio"],
+  #               ["AWS_SECRET_ACCESS_KEY", "minio123"],
+  #               ["MLFLOW_S3_ENDPOINT_URL", "http://127.0.0.1:9000"]]
+  # volumes:
+  #   - ../aws_credentials:/.aws
+# python_env: python_env.yaml
+
+entry_points:
+  main:
+    parameters:
+      alpha: {type: float, default: 0.5}
+      l1_ratio: {type: float, default: 0.1}
+    command: "python3 train.py {alpha} {l1_ratio}"
