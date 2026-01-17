@@ -1,0 +1,30 @@
+docker build -t mlflow-docker-example:R1 -f Dockerfile .
+
+docker compose build
+docker compose up
+docker compose down
+
+mlflow run . --env-manager local
+
+export MLFLOW_TRACKING_URI=http://localhost:5000 && \
+mlflow run mlflow-project -P alpha=0.5 \
+  --docker-args "network=mlflow-network"
+
+export MLFLOW_S3_ENDPOINT_URL=http://localhost:9000
+export AWS_ACCESS_KEY_ID=user
+export AWS_SECRET_ACCESS_KEY=password
+export MLFLOW_TRACKING_URI=http://localhost:5000
+mlflow models serve -m models:/test/1 -p 4000 --env-manager local
+curl -X POST -H "Content-Type:application/json" --data '{"dataframe_split":{"columns":["fixed acidity", "volatile acidity", "citric acid", "residual sugar", "chlorides", "free sulfur dioxide", "total sulfur dioxide", "density", "pH", "sulphates", "alcohol"],"data":[[6.2, 0.66, 0.48, 1.2, 0.029, 29, 75, 0.98, 3.33, 0.39, 12.8]]}}' http://127.0.0.1:4000/invocations
+
+uv add cookiecutter
+cookiecutter -c v1 https://github.com/drivendata/cookiecutter-data-science
+
+
+docker run --rm --network mlflow-network 
+-v /Users/ksarma/.aws:/.aws 
+-e MLFLOW_RUN_ID=6079b12631cc42b5bb155b77fe521d11 
+-e MLFLOW_TRACKING_URI=http://localhost:5000 
+-e MLFLOW_EXPERIMENT_ID=0 
+-e AWS_SECRET_ACCESS_KEY=password -e AWS_ACCESS_KEY_ID=user 
+-e MLFLOW_S3_ENDPOINT_URL=http://localhost:9000 mlflow-docker-example:R1 python3 train.py 0.5 0.1'
