@@ -1,0 +1,71 @@
+name: Development Pipeline
+
+on:
+  push:
+    branches: development
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync
+      
+      - name: Pull DVC data (sample)
+        run: |
+          dvc pull
+      
+      - name: Pull all experiments from remote
+        run: |
+          dvc exp pull origin
+      
+      - name: Apply best experiment
+        run: |
+          # Get best experiment by lowest final_val_loss (skip header, get first data row)
+          BEST_EXP=$(dvc exp show --csv --sort-by final_val_loss --sort-order asc | head -n 2 | tail -n 1 | cut -d ',' -f 1)
+          if [ -n "$BEST_EXP" ] && [ "$BEST_EXP" != "Experiment" ]; then
+            echo "Applying best experiment: $BEST_EXP (lowest final_val_loss)"
+            # Apply best exp to get its params (batch_size, epochs, learning_rate)
+            dvc exp apply "$BEST_EXP"
+            # Re-run with dev's fixed data_sample and validation_split, but keep best exp's other params
+            dvc exp run --name exp-${{ github.sha }} \
+              -S environments.dev.data_sample=1.0 \
+              -S environments.dev.validation_split=0.2
+          else
+            echo "No experiments found, running new experiment with dev defaults"
+            dvc exp run --name exp-${{ github.sha }} \
+              -S environments.dev.data_sample=1.0 \
+              -S environments.dev.validation_split=0.2
+          fi
+      
+      # - name: Validate Data (Quality + Statistical)
+      #   run: |
+      #     python src/data/validate.py --data --contracts --statistical
+      
+      # - name: Validate Pipeline Components
+      #   run: |
+      #     python pipelines/validate.py --all
+      
+      - name: Push DVC changes
+        run: |
+          dvc push
+          dvc exp push origin exp-${{ github.sha }}
+      
+      - name: Commit applied experiment
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Apply best experiment from feature branch"
+          commit_user_name: github-actions[bot]
+          commit_user_email: github-actions[bot]@users.noreply.github.com

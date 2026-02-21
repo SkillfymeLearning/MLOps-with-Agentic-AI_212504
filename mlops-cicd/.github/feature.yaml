@@ -1,0 +1,48 @@
+name: Feature Pipeline
+
+on:
+  push:
+    branches: feature/tools2
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=99 --statistics
+
+      - name: Check formatting with black
+        run: |
+          pip install black
+          black --check .
+      
+      - name: Pull DVC data (sample)
+        run: |
+          dvc pull
+      
+      - name: Run Experiment (without applying)
+        run: |
+          dvc exp run --name exp-${{ github.sha }} --temp --pull
+      
+      - name: Push experiment to remote
+        run: |
+          dvc exp push origin exp-${{ github.sha }} 
