@@ -1,0 +1,15 @@
+data_ingestion:
+  test_size: 0.20
+  s3_path: s3://kethan-gp-artifact/customer_data/
+
+feature_engineering:
+  max_features: 35
+
+model_building:
+  n_estimators: 22
+  random_state: 2
+
+environments:
+  dev:
+    data_sample: 1.0
+    validation_split: 0.2

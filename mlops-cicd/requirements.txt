@@ -1,0 +1,9 @@
+dvc
+dvc[s3]
+dvclive
+pytest
+scikit-learn
+pandas
+numpy
+nltk
+pyyaml
