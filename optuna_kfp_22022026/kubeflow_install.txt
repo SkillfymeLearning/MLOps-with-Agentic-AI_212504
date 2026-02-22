@@ -1,0 +1,7 @@
+while ! kustomize build manifests/example | kubectl apply -f -; do echo "Retrying to apply resources"; sleep 20; done
+kustomize build manifests/example | kubectl delete  -f -
+kind create cluster --name kubeflow --config kind_kfconfig.yaml
+kind get kubeconfig --name kubeflow > kubeflow-config
+kind delete cluster --name kubeflow
+kubectl port-forward svc/istio-ingressgateway -n istio-system 8080:80
+kubectl get-pods --all-namespaces

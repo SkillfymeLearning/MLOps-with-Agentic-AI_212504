@@ -1,0 +1,9 @@
+uv add kfp / pip install kfp
+kubectl get roles -n kubeflow
+kubectl get pods -n kubeflow
+kubectl get svc -n kubeflow
+kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
+kubectl get pods -n kubeflow -w
+kubectl get pods -A | grep mnist-classifier | awk '{print "kubectl delete pod -n "$1" "$2}' | sh
+kubectl logs -f -l app=digits-server -n kubeflow
+kubectl port-forward svc/digits-server 8501:8501 -n kubeflow

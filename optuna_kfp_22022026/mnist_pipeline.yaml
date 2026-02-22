@@ -1,0 +1,499 @@
+# PIPELINE DEFINITION
+# Name: mnist-classifier-dev
+# Description: Detect digits
+# Inputs:
+#    hyperparameters: dict
+components:
+  comp-load-dataset:
+    executorLabel: exec-load-dataset
+    outputDefinitions:
+      artifacts:
+        x_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-model-building:
+    executorLabel: exec-model-building
+    outputDefinitions:
+      artifacts:
+        ml_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-model-serving:
+    executorLabel: exec-model-serving
+    inputDefinitions:
+      artifacts:
+        model_trained:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-model-training:
+    executorLabel: exec-model-training
+    inputDefinitions:
+      artifacts:
+        ml_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        x_test_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        hyperparameters:
+          parameterType: STRUCT
+    outputDefinitions:
+      artifacts:
+        classification_metrics:
+          artifactType:
+            schemaTitle: system.ClassificationMetrics
+            schemaVersion: 0.0.1
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model_trained:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-preprocessing:
+    executorLabel: exec-preprocessing
+    inputDefinitions:
+      artifacts:
+        x_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        x_test_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-load-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - load_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy' 'tensorflow'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef load_dataset(x_train_artifact: Output[Dataset], x_test_artifact:\
+          \ Output[Dataset],y_train_artifact: Output[Dataset],y_test_artifact: Output[Dataset]):\n\
+          \    '''\n    get dataset from Keras and load it separating input from output\
+          \ and train from test\n    '''\n    import numpy as np\n    from tensorflow\
+          \ import keras\n    import os\n\n    (x_train, y_train), (x_test, y_test)\
+          \ = keras.datasets.mnist.load_data()\n\n    import shutil\n    np.save(\"\
+          /tmp/x_train.npy\",x_train)\n    shutil.move(\"/tmp/x_train.npy\", x_train_artifact.path)\n\
+          \n    np.save(\"/tmp/y_train.npy\",y_train)\n    shutil.move(\"/tmp/y_train.npy\"\
+          , y_train_artifact.path)\n\n    np.save(\"/tmp/x_test.npy\",x_test)\n  \
+          \  shutil.move(\"/tmp/x_test.npy\", x_test_artifact.path)\n\n    np.save(\"\
+          /tmp/y_test.npy\",y_test)\n    shutil.move(\"/tmp/y_test.npy\", y_test_artifact.path)\n\
+          \n"
+        image: python:3.10-slim
+    exec-model-building:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_building
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy' 'tensorflow'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_building(ml_model : Output[Model]):\n    '''\n    Define\
+          \ the model architecture\n    This way it's more simple to change the model\
+          \ architecture and all the steps and indipendent\n    '''\n    from tensorflow\
+          \ import keras\n    import tensorflow as tf\n    import shutil\n    import\
+          \ os\n\n    #model definition\n    model = keras.models.Sequential()\n \
+          \   model.add(keras.layers.Conv2D(64, (3, 3), activation='relu', input_shape=(28,28,1)))\n\
+          \    model.add(keras.layers.MaxPool2D(2, 2))\n\n    model.add(keras.layers.Flatten())\n\
+          \    model.add(keras.layers.Dense(64, activation='relu'))\n    model.add(keras.layers.Dense(32,\
+          \ activation='relu'))\n\n    model.add(keras.layers.Dense(10, activation='softmax'))\n\
+          \n    save_path = ml_model.path + \".keras\"\n    model.save(save_path)\n\
+          \n    # Important: KFP expects the file at ml_model.path. \n    # Some environments\
+          \ require you to move it back to the exact path KFP expects\n\n    shutil.move(save_path,\
+          \ ml_model.path)\n\n"
+        image: python:3.10-slim
+    exec-model-serving:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_serving
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_serving(model_trained: Input[Model]):\n    from kubernetes\
+          \ import client, config\n    import os\n\n    config.load_incluster_config()\n\
+          \    apps_v1 = client.AppsV1Api()\n    core_v1 = client.CoreV1Api()\n\n\
+          \    namespace = \"kubeflow\"\n    name = \"digits-server\"\n\n    # We\
+          \ pass the URI into the container via an environment variable\n    # to\
+          \ avoid complex string formatting in the shell command.\n    model_uri =\
+          \ model_trained.uri\n\n    serving_script = \"\"\"\nimport os\nimport boto3\n\
+          import tensorflow as tf\nimport numpy as np\nfrom flask import Flask, request,\
+          \ jsonify\nfrom urllib.parse import urlparse\n\napp = Flask(__name__)\n\n\
+          def download_s3_folder(s3_uri, local_dir):\n    parsed = urlparse(s3_uri)\n\
+          \    bucket_name = parsed.netloc\n    prefix = parsed.path.lstrip('/')\n\
+          \n    # Use environment variables for credentials\n    s3 = boto3.client('s3',\n\
+          \        endpoint_url=os.getenv('S3_ENDPOINT', 'http://minio-service.kubeflow:9000'),\n\
+          \        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),\n        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),\n\
+          \        region_name='us-east-1')\n\n    paginator = s3.get_paginator('list_objects_v2')\n\
+          \    for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):\n\
+          \        for obj in page.get('Contents', []):\n            # Create local\
+          \ path\n            rel_path = os.path.relpath(obj['Key'], prefix)\n   \
+          \         target = os.path.join(local_dir, rel_path)\n            os.makedirs(os.path.dirname(target),\
+          \ exist_ok=True)\n            if not obj['Key'].endswith('/'):\n       \
+          \         s3.download_file(bucket_name, obj['Key'], target)\n\nMODEL_DIR\
+          \ = '/tmp/model'\n# Path to the exported SavedModel (the folder containing\
+          \ saved_model.pb)\nexport_path = os.path.join(MODEL_DIR, '1')\n\ndownload_s3_folder(os.getenv('MODEL_URI'),\
+          \ MODEL_DIR)\n\n# This is the Keras 3 way to handle the folder format you\
+          \ exported\nmodel_layer = tf.keras.layers.TFSMLayer(export_path, call_endpoint='serving_default')\n\
+          \n@app.route('/v1/models/mnist:predict', methods=['POST'])\ndef predict():\n\
+          \    try:\n        data = request.json['instances']\n        # Ensure input\
+          \ is float32 and normalized\n        img = np.array(data).reshape(-1, 28,\
+          \ 28, 1).astype('float32') / 255.0\n\n        # TFSMLayer returns a dictionary\
+          \ of outputs\n        predictions_dict = model_layer(img)\n\n        # Grab\
+          \ the first output key (usually 'output_0' or 'dense_2')\n        first_key\
+          \ = list(predictions_dict.keys())[0]\n        result = predictions_dict[first_key].numpy().tolist()\n\
+          \n        return jsonify({'predictions': result})\n    except Exception\
+          \ as e:\n        return jsonify({'error': str(e)}), 500\n\napp.run(host='0.0.0.0',\
+          \ port=8501)\n\"\"\"\n\n    deployment = {\n        \"apiVersion\": \"apps/v1\"\
+          ,\n        \"kind\": \"Deployment\",\n        \"metadata\": {\"name\": name,\
+          \ \"namespace\": namespace},\n        \"spec\": {\n            \"replicas\"\
+          : 1,\n            \"selector\": {\"matchLabels\": {\"app\": name}},\n  \
+          \          \"template\": {\n                \"metadata\": {\"labels\": {\"\
+          app\": name}},\n                \"spec\": {\n                    \"containers\"\
+          : [{\n                        \"name\": \"python-serving\",\n          \
+          \              \"image\": \"python:3.10-slim\",\n                      \
+          \  \"env\": [\n                            {\"name\": \"MODEL_URI\", \"\
+          value\": model_uri},\n                            {\"name\": \"AWS_ACCESS_KEY_ID\"\
+          , \"value\": \"minio\"}, # Replace with actual or secretRef\n          \
+          \                  {\"name\": \"AWS_SECRET_ACCESS_KEY\", \"value\": \"minio123\"\
+          },\n                            {\"name\": \"S3_ENDPOINT\", \"value\": \"\
+          http://minio-service.kubeflow:9000\"}\n                        ],\n    \
+          \                    \"command\": [\"/bin/sh\", \"-c\"],\n             \
+          \           \"args\": [f\"pip install flask tensorflow boto3 && python3\
+          \ -c \\\"{serving_script}\\\"\"],\n                        \"ports\": [{\"\
+          containerPort\": 8501}]\n                    }]\n                }\n   \
+          \         }\n        }\n    }\n\n    try:\n        apps_v1.delete_namespaced_deployment(name=name,\
+          \ namespace=namespace)\n    except: pass\n\n    apps_v1.create_namespaced_deployment(namespace=namespace,\
+          \ body=deployment)\n    service = {\n        \"apiVersion\": \"v1\",\n \
+          \       \"kind\": \"Service\",\n        \"metadata\": {\"name\": name, \"\
+          namespace\": namespace},\n        \"spec\": {\n            \"selector\"\
+          : {\"app\": name}, # This MUST match the label in your deployment\n    \
+          \        \"ports\": [\n                {\n                    \"protocol\"\
+          : \"TCP\",\n                    \"port\": 8501,       # The port other pods\
+          \ will call\n                    \"targetPort\": 8501   # The port the container\
+          \ is listening on\n                }\n            ],\n            \"type\"\
+          : \"ClusterIP\" # Internal-only stable IP\n        }\n    }\n\n    # Delete\
+          \ existing service if it exists to avoid 'AlreadyExists' error\n    try:\n\
+          \        core_v1.delete_namespaced_service(name=name, namespace=namespace)\n\
+          \        print(\"Existing service deleted.\")\n    except:\n        pass\n\
+          \n    # Create the service\n    core_v1.create_namespaced_service(namespace=namespace,\
+          \ body=service)\n    print(f\"Service {name} created in namespace {namespace}\"\
+          )\n\n"
+        image: python:3.10
+    exec-model-training:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_training
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy' 'tensorflow'\
+          \ 'scikit-learn'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_training(\n    ml_model : Input[Model],\n    x_train_processed\
+          \ : Input[Dataset], x_test_processed: Input[Dataset],\n    y_train_artifact\
+          \ : Input[Dataset], y_test_artifact :Input[Dataset],\n    hyperparameters\
+          \ : dict, \n    metrics: Output[Metrics], \n    classification_metrics:\
+          \ Output[ClassificationMetrics], model_trained: Output[Model]\n    ):\n\
+          \    \"\"\"\n    Build the model with Keras API\n    Export model metrics\n\
+          \    \"\"\"\n    from tensorflow import keras\n    import tensorflow as\
+          \ tf\n    import numpy as np\n    import os\n    import shutil\n    from\
+          \ sklearn.metrics import confusion_matrix\n    import shutil\n\n    #load\
+          \ dataset\n    x_train = np.load(x_train_processed.path)\n    x_test = np.load(x_test_processed.path)\n\
+          \    y_train = np.load(y_train_artifact.path)\n    y_test = np.load(y_test_artifact.path)\n\
+          \    temp_model_path = \"/tmp/model.keras\"\n    shutil.copy(ml_model.path,\
+          \ temp_model_path)\n\n    # Load from the path that has the extension\n\
+          \    model = keras.models.load_model(temp_model_path)    \n    #reading\
+          \ best hyperparameters from katib\n    lr=float(hyperparameters[\"lr\"])\n\
+          \    no_epochs = int(hyperparameters[\"num_epochs\"])\n\n    #compile the\
+          \ model - we want to have a binary outcome\n    model.compile(tf.keras.optimizers.SGD(learning_rate=lr),\n\
+          \              loss=\"sparse_categorical_crossentropy\",\n             \
+          \ metrics=['accuracy'])\n\n\n    #fit the model and return the history while\
+          \ training\n    history = model.fit(\n      x=x_train,\n      y=y_train,\n\
+          \      epochs=no_epochs,\n      batch_size=20,\n    )\n\n\n    # Test the\
+          \ model against the test dataset\n    # Returns the loss value & metrics\
+          \ values for the model in test mode.\n    model_loss, model_accuracy = model.evaluate(x=x_test,y=y_test)\n\
+          \n    #build a confusione matrix\n    y_predict = model.predict(x=x_test)\n\
+          \    y_predict = np.argmax(y_predict, axis=1)\n    cmatrix = confusion_matrix(y_test,\
+          \ y_predict)\n    cmatrix = cmatrix.tolist()\n    numbers_list = ['0','1','2','3','4','5','6','7','8','9']\n\
+          \    #log confusione matrix\n    classification_metrics.log_confusion_matrix(numbers_list,cmatrix)\n\
+          \n    #Kubeflox metrics export\n    metrics.log_metric(\"Test loss\", model_loss)\n\
+          \    metrics.log_metric(\"Test accuracy\", model_accuracy)\n    export_path\
+          \ = os.path.join(model_trained.path, \"1\")\n    os.makedirs(export_path,\
+          \ exist_ok=True)\n\n    # In Keras 3, use export() to create a SavedModel\
+          \ directory for KServe\n    # This avoids the \"format not supported\" error\
+          \ later in serving\n    model.export(export_path)\n\n    # #adding /1/ subfolder\
+          \ for TFServing and saving model to artifact store\n    # model_trained.uri\
+          \ = model_trained.uri + '/1/'\n    # temp_trained_model_path = \"/tmp/trainedmodel.keras\"\
+          \n    # keras.models.save_model(model, temp_trained_model_path) #saving\
+          \ with keras extension to be able to load it in the next step\n\n    # #\
+          \ Important: KFP expects the file at ml_model.path. \n    # # Some environments\
+          \ require you to move it back to the exact path KFP expects\n\n    # shutil.move(temp_trained_model_path,\
+          \ model_trained.path)\n\n"
+        image: python:3.10-slim
+    exec-preprocessing:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocessing
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy'  && \
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocessing(metrics : Output[Metrics], x_train_processed :\
+          \ Output[Dataset], x_test_processed: Output[Dataset],\n                \
+          \  x_train_artifact: Input[Dataset], x_test_artifact: Input[Dataset]):\n\
+          \    ''' \n    just reshape and normalize data\n    '''\n    import numpy\
+          \ as np\n    import os\n\n    # load data artifact store\n    x_train =\
+          \ np.load(x_train_artifact.path) \n    x_test = np.load(x_test_artifact.path)\n\
+          \n    # reshaping the data\n    # reshaping pixels in a 28x28px image with\
+          \ greyscale, canal = 1. This is needed for the Keras API\n    x_train =\
+          \ x_train.reshape(-1,28,28,1)\n    x_test = x_test.reshape(-1,28,28,1)\n\
+          \    # normalizing the data\n    # each pixel has a value between 0-255.\
+          \ Here we divide by 255, to get values from 0-1\n    x_train = x_train /\
+          \ 255\n    x_test = x_test / 255\n\n    #logging metrics using Kubeflow\
+          \ Artifacts\n    metrics.log_metric(\"Len x_train\", x_train.shape[0])\n\
+          \    metrics.log_metric(\"Len y_train\", x_test.shape[0])\n\n\n    # save\
+          \ feuture in artifact store\n    import shutil\n    np.save(\"tmp/x_train.npy\"\
+          ,x_train)\n    shutil.move(\"tmp/x_train.npy\", x_train_processed.path)\n\
+          \n    np.save(\"tmp/x_test.npy\",x_test)\n    shutil.move(\"tmp/x_test.npy\"\
+          , x_test_processed.path)\n\n"
+        image: python:3.10-slim
+pipelineInfo:
+  description: Detect digits
+  name: mnist-classifier-dev
+root:
+  dag:
+    tasks:
+      load-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-load-dataset
+        taskInfo:
+          name: load-dataset
+      model-building:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-building
+        taskInfo:
+          name: model-building
+      model-serving:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-serving
+        dependentTasks:
+        - model-training
+        inputs:
+          artifacts:
+            model_trained:
+              taskOutputArtifact:
+                outputArtifactKey: model_trained
+                producerTask: model-training
+        taskInfo:
+          name: model-serving
+      model-training:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-training
+        dependentTasks:
+        - load-dataset
+        - model-building
+        - preprocessing
+        inputs:
+          artifacts:
+            ml_model:
+              taskOutputArtifact:
+                outputArtifactKey: ml_model
+                producerTask: model-building
+            x_test_processed:
+              taskOutputArtifact:
+                outputArtifactKey: x_test_processed
+                producerTask: preprocessing
+            x_train_processed:
+              taskOutputArtifact:
+                outputArtifactKey: x_train_processed
+                producerTask: preprocessing
+            y_test_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: y_test_artifact
+                producerTask: load-dataset
+            y_train_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: y_train_artifact
+                producerTask: load-dataset
+          parameters:
+            hyperparameters:
+              componentInputParameter: hyperparameters
+        taskInfo:
+          name: model-training
+      preprocessing:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-preprocessing
+        dependentTasks:
+        - load-dataset
+        inputs:
+          artifacts:
+            x_test_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: x_test_artifact
+                producerTask: load-dataset
+            x_train_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: x_train_artifact
+                producerTask: load-dataset
+        taskInfo:
+          name: preprocessing
+  inputDefinitions:
+    parameters:
+      hyperparameters:
+        parameterType: STRUCT
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
