@@ -1,0 +1,15 @@
+kubectl logs -f -l app=digits-server -n kubeflow
+kubectl port-forward svc/digits-server 8501:8501 -n kubeflow
+kubectl apply -n kserve-test -f service.yaml
+kubectl get all -n kserve-test
+kubectl port-forward service/sklearn-iris-predictor -n kserve-test 8081:80
+curl  -H "Content-Type: application/json" http://localhost:8081/v1/models/sklearn-iris:predict -d @./iris-input.json
+
+delete resources
+kubectl get pods -A | grep mnist-classifer | awk '{print "kubectl delete pod -n "$1" "$2}' | sh
+kubectl get pods -A | grep mnist-distribute | awk '{print "kubectl delete pod -n "$1" "$2}' | sh
+kubectl get deployment -A | grep digits-server | awk '{print "kubectl delete deployment -n "$1" "$2}' | sh 
+
+https://github.com/kubeflow/manifests/blob/master/applications/kserve/kserve/params.env
+
+https://github.com/kserve/kserve/blob/master/hack/quick_install.sh
