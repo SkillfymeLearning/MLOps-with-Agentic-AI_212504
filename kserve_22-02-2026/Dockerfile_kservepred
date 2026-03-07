@@ -1,0 +1,16 @@
+FROM python:3.10
+
+USER root
+
+RUN pip install --no-cache-dir \
+    boto3 \
+    tensorflow \
+    numpy \
+    kserve
+WORKDIR /app
+
+COPY make_preds_kserve.py /app/pred.py
+
+USER 1000
+
+ENTRYPOINT ["python", "/app/pred.py"]

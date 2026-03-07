@@ -1,0 +1,23 @@
+install kfp and kserve using shell scripts
+kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
+kubectl port-forward svc/digits-server 8501:8501 -n kubeflow
+
+kubectl get pods -n kubeflow -l serving.kserve.io/inferenceservice=digits-server
+kubectl get isvc digits-server -n kubeflow -o yaml
+kubectl get inferenceservice digits-server -n kubeflow
+kubectl get events -n kubeflow --field-selector involvedObject.name=digits-server
+
+
+delete resources
+kubectl get pods -A | grep mnist-classifer | awk '{print "kubectl delete pod -n "$1" "$2}' | sh
+kubectl get pods -A | grep mnist-distribute | awk '{print "kubectl delete pod -n "$1" "$2}' | sh
+kubectl get deployment -A | grep digits-server | awk '{print "kubectl delete deployment -n "$1" "$2}' | sh 
+
+https://github.com/kubeflow/manifests/blob/master/applications/kserve/kserve/params.env
+
+https://github.com/kserve/kserve/blob/master/hack/quick_install.sh
+
+
+docker build -t mnist_tf:latest -f Dockerfile_model . && docker run -p 8686:8686 mnist_tf:latest
+kubectl port-forward -n kubeflow svc/digits-server-predictor 8686:8686
+kubectl get svc --all-namespaces

@@ -1,0 +1,646 @@
+# PIPELINE DEFINITION
+# Name: mnist-classifier-dev
+# Description: Detect digits
+# Inputs:
+#    hyperparameters: dict
+components:
+  comp-load-dataset:
+    executorLabel: exec-load-dataset
+    outputDefinitions:
+      artifacts:
+        x_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-model-building:
+    executorLabel: exec-model-building
+    outputDefinitions:
+      artifacts:
+        ml_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-model-serving:
+    executorLabel: exec-model-serving
+    inputDefinitions:
+      artifacts:
+        model_trained:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-model-training:
+    executorLabel: exec-model-training
+    inputDefinitions:
+      artifacts:
+        ml_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        x_test_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        y_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        hyperparameters:
+          parameterType: STRUCT
+        train_code_string:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        classification_metrics:
+          artifactType:
+            schemaTitle: system.ClassificationMetrics
+            schemaVersion: 0.0.1
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model_trained:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-preprocessing:
+    executorLabel: exec-preprocessing
+    inputDefinitions:
+      artifacts:
+        x_test_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_artifact:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        x_test_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        x_train_processed:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-load-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - load_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy' 'tensorflow'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef load_dataset(x_train_artifact: Output[Dataset], x_test_artifact:\
+          \ Output[Dataset],y_train_artifact: Output[Dataset],y_test_artifact: Output[Dataset]):\n\
+          \    '''\n    get dataset from Keras and load it separating input from output\
+          \ and train from test\n    '''\n    import numpy as np\n    from tensorflow\
+          \ import keras\n    import os\n\n    (x_train, y_train), (x_test, y_test)\
+          \ = keras.datasets.mnist.load_data()\n\n    import shutil\n    np.save(\"\
+          /tmp/x_train.npy\",x_train)\n    shutil.move(\"/tmp/x_train.npy\", x_train_artifact.path)\n\
+          \n    np.save(\"/tmp/y_train.npy\",y_train)\n    shutil.move(\"/tmp/y_train.npy\"\
+          , y_train_artifact.path)\n\n    np.save(\"/tmp/x_test.npy\",x_test)\n  \
+          \  shutil.move(\"/tmp/x_test.npy\", x_test_artifact.path)\n\n    np.save(\"\
+          /tmp/y_test.npy\",y_test)\n    shutil.move(\"/tmp/y_test.npy\", y_test_artifact.path)\n\
+          \n"
+        image: python:3.10-slim
+    exec-model-building:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_building
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy' 'tensorflow==2.15.1'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_building(ml_model : Output[Model]):\n    '''\n    Define\
+          \ the model architecture\n    This way it's more simple to change the model\
+          \ architecture and all the steps and indipendent\n    '''\n    from tensorflow\
+          \ import keras\n    import tensorflow as tf\n    import shutil\n    import\
+          \ os\n\n    #model definition\n    model = keras.models.Sequential()\n \
+          \   model.add(keras.layers.Conv2D(64, (3, 3), activation='relu', input_shape=(28,28,1)))\n\
+          \    model.add(keras.layers.MaxPool2D(2, 2))\n\n    model.add(keras.layers.Flatten())\n\
+          \    model.add(keras.layers.Dense(64, activation='relu'))\n    model.add(keras.layers.Dense(32,\
+          \ activation='relu'))\n\n    model.add(keras.layers.Dense(10, activation='softmax'))\n\
+          \n    save_path = ml_model.path + \".keras\"\n    model.save(save_path)\n\
+          \n    # Important: KFP expects the file at ml_model.path. \n    # Some environments\
+          \ require you to move it back to the exact path KFP expects\n\n    shutil.move(save_path,\
+          \ ml_model.path)\n\n"
+        image: python:3.10-slim
+    exec-model-serving:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_serving
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes'\
+          \ 'kserve'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.15.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_serving(model_trained: Input[Model]):\n    \"\"\"\n   \
+          \ Create kserve instance\n    \"\"\"\n    from kubernetes import client\
+          \ \n    from kserve import KServeClient\n    from kserve import V1beta1InferenceService\n\
+          \    from kserve import V1beta1InferenceServiceSpec\n    from kserve import\
+          \ V1beta1PredictorSpec\n    from datetime import datetime\n    import time\n\
+          \n    namespace = \"kubeflow\"\n    name = \"digits-server\"\n    kind =\
+          \ \"InferenceService\"\n\n    uri = model_trained.uri\n    uri = uri.replace(\"\
+          minio\", \"s3\")\n    uri = uri.rsplit(\"/\", 2)[0]\n\n    api_version =\
+          \ 'serving.kserve.io/v1beta1'\n    predictor = V1beta1PredictorSpec(\n \
+          \               service_account_name=\"sa-minio-kserve\",\n            \
+          \    containers=[\n                    client.V1Container(\n           \
+          \             name=\"kserve-container\",\n                        image=\"\
+          mnist_tf:latest\",\n                        ports=[\n                  \
+          \          client.V1ContainerPort(\n                                container_port=8686,\n\
+          \                                protocol=\"TCP\"\n                    \
+          \        )\n                        ],\n                        env=[\n\
+          \                            client.V1EnvVar(name=\"STORAGE_URI\", value=uri),\n\
+          \                            client.V1EnvVar(name=\"MODEL_NAME\", value=name),\n\
+          \                        ],\n                        resources=client.V1ResourceRequirements(\n\
+          \                            requests={\"memory\": \"512Mi\", \"cpu\": \"\
+          500m\"},\n                            limits={\"memory\": \"1Gi\", \"cpu\"\
+          : \"1\"}\n                        ),\n                        # KServe storage\
+          \ initializer will download model to /mnt/models\n                     \
+          \   # Your server script must load from there\n                        command=[\"\
+          python\", \"/app/server.py\"]\n                    )\n                ]\n\
+          \            )\n    isvc = V1beta1InferenceService(\n        api_version=api_version,\n\
+          \        kind=kind,\n        metadata=client.V1ObjectMeta(\n           \
+          \ name=name,\n            namespace=namespace,\n            annotations={\n\
+          \                'sidecar.istio.io/inject': 'false',\n                'serving.kserve.io/deploymentMode':\
+          \ 'RawDeployment'\n            }\n        ),\n        spec=V1beta1InferenceServiceSpec(\n\
+          \            predictor=predictor\n        )\n    )\n\n    KServe = KServeClient()\n\
+          \n    #replace old inference service with a new one\n    from kubernetes.client.exceptions\
+          \ import ApiException\n\n    def wait_for_deletion(kserve_client, name,\
+          \ namespace, timeout=120):\n        start = time.time()\n        while time.time()\
+          \ - start < timeout:\n            try:\n                kserve_client.get(name=name,\
+          \ namespace=namespace)\n                print(f\"Waiting for deletion of\
+          \ '{name}'...\")\n                time.sleep(5)\n            except RuntimeError\
+          \ as e:\n                if \"404\" in str(e) or \"Not Found\" in str(e):\n\
+          \                    print(f\"'{name}' fully deleted.\")\n             \
+          \       return True\n                raise  # re-raise unexpected errors\n\
+          \        raise TimeoutError(f\"ISVC '{name}' was not deleted within {timeout}s\"\
+          )\n\n    # Delete if exists\n    try:\n        KServe.delete(name=name,\
+          \ namespace=namespace)\n        print(\"Old ISVC delete request sent\")\n\
+          \        wait_for_deletion(KServe, name, namespace)\n    except RuntimeError\
+          \ as e:\n        if \"404\" in str(e) or \"Not Found\" in str(e):\n    \
+          \        print(\"No existing ISVC found, skipping delete\")\n        else:\n\
+          \            raise\n\n    # Now safe to create\n    try:\n        KServe.create(isvc)\n\
+          \        print(\"InferenceService created successfully\")\n    except Exception\
+          \ as e:\n        print(\"Create failed:\", e)\n        time.sleep(10)\n\n"
+        image: python:3.10
+    exec-model-training:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - model_training
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy' 'tensorflow'\
+          \ 'scikit-learn' 'kubernetes' 'kfp' 'boto3' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef model_training(\n    train_code_string: str,\n    ml_model :\
+          \ Input[Model],\n    x_train_processed : Input[Dataset], x_test_processed:\
+          \ Input[Dataset],\n    y_train_artifact : Input[Dataset], y_test_artifact\
+          \ :Input[Dataset],\n    hyperparameters : dict, \n    metrics: Output[Metrics],\
+          \ \n    classification_metrics: Output[ClassificationMetrics], model_trained:\
+          \ Output[Model]\n    ):\n    \"\"\"\n    Build the model with Keras API\n\
+          \    Export model metrics\n    \"\"\"\n    from kubernetes import client,\
+          \ config\n    from kubernetes.client.exceptions import ApiException\n  \
+          \  import time, json, boto3, os\n    from urllib.parse import urlparse\n\
+          \    import inspect\n    import shutil\n\n    full_command = f\"{train_code_string}\\\
+          n\\nmnist_dist_train_logic()\"\n    metrics_json_uri = f\"{model_trained.uri}_metrics.json\"\
+          \n\n    config.load_incluster_config()\n    custom_api = client.CustomObjectsApi()\n\
+          \n    tfjob_manifest = {\n        \"apiVersion\": \"kubeflow.org/v1\",\n\
+          \        \"kind\": \"TFJob\",\n        \"metadata\": {\"name\": \"mnist-distributed\"\
+          , \"namespace\": \"kubeflow\"},\n        \"spec\": {\n            \"tfReplicaSpecs\"\
+          : {\n                \"Worker\": {\n                    \"replicas\": 2,\n\
+          \                    \"template\": {\n                        \"spec\":\
+          \ {\n                            \"containers\": [{\n                  \
+          \              \"name\": \"tensorflow\",\n                             \
+          \   \"image\": \"python:3.10-slim\",\n                                \"\
+          command\": [\"/bin/sh\", \"-c\"],\n                                \"args\"\
+          : [f\"pip install kubernetes tensorflow==2.15.1 boto3 numpy scikit-learn\
+          \ kfp && python3 -c \\\"{full_command}\\\"\"],\n                       \
+          \         \"env\": [\n                                    {\"name\": \"\
+          X_TRAIN_URI\", \"value\": str(x_train_processed.uri)},\n               \
+          \                     {\"name\": \"Y_TRAIN_URI\", \"value\": str(y_train_artifact.uri)},\n\
+          \                                    {\"name\": \"X_TEST_URI\", \"value\"\
+          : str(x_test_processed.uri)},\n                                    {\"name\"\
+          : \"Y_TEST_URI\", \"value\": str(y_test_artifact.uri)},\n              \
+          \                      {\"name\": \"LEARNING_RATE\", \"value\": str(hyperparameters['lr'])},\n\
+          \                                    # Pass the URI of where to save the\
+          \ model\n                                    {\"name\": \"METRICS_JSON_URI\"\
+          , \"value\": metrics_json_uri},\n                                    {\"\
+          name\": \"MODEL_URI\", \"value\": str(ml_model.uri)},\n                \
+          \                    {\"name\": \"TRAINED_MODEL_URI\", \"value\": str(model_trained.uri)},\n\
+          \                                    {\"name\": \"TRAINED_MODEL_PATH\",\
+          \ \"value\": str(model_trained.path)},\n                               \
+          \     {\"name\": \"S3_ENDPOINT\", \"value\": \"http://minio-service.kubeflow:9000\"\
+          },\n                                    {\"name\": \"AWS_ACCESS_KEY_ID\"\
+          , \"value\": \"minio\"},\n                                    {\"name\"\
+          : \"AWS_SECRET_ACCESS_KEY\", \"value\": \"minio123\"}\n                \
+          \                ]\n                            }]\n                   \
+          \     }\n                    }\n                }\n            }\n     \
+          \   }\n    }\n\n    tfjob_name = \"mnist-distributed\"\n    namespace =\
+          \ \"kubeflow\"\n\n    # 1. DELETE EXISTING JOB\n    try:\n        print(f\"\
+          Deleting existing TFJob: {tfjob_name}\")\n        custom_api.delete_namespaced_custom_object(\n\
+          \            group=\"kubeflow.org\",\n            version=\"v1\",\n    \
+          \        namespace=namespace,\n            plural=\"tfjobs\",\n        \
+          \    name=tfjob_name\n        )\n        # Give K8s a few seconds to clean\
+          \ up the resource and its pods\n        print(\"Waiting for cleanup...\"\
+          )\n        time.sleep(10) \n    except ApiException as e:\n        if e.status\
+          \ == 404:\n            print(\"No existing job found. Proceeding...\")\n\
+          \        else:\n            raise e\n\n    # 2. CREATE THE NEW JOB\n   \
+          \ print(f\"Creating new TFJob: {tfjob_name}\")\n    custom_api.create_namespaced_custom_object(\n\
+          \        group=\"kubeflow.org\",\n        version=\"v1\",\n        namespace=namespace,\n\
+          \        plural=\"tfjobs\",\n        body=tfjob_manifest\n    )\n    while\
+          \ True:\n        job = custom_api.get_namespaced_custom_object(\"kubeflow.org\"\
+          , \"v1\", \"kubeflow\", \"tfjobs\", \"mnist-distributed\")\n        status\
+          \ = job.get(\"status\", {}).get(\"conditions\", [])\n        if any(c.get(\"\
+          type\") == \"Succeeded\" for c in status): break\n        if any(c.get(\"\
+          type\") == \"Failed\" for c in status): raise Exception(\"TFJob Failed\"\
+          )\n        time.sleep(20)\n\n    # Final Step: Pull metrics back into KFP\
+          \ UI\n    parsed = urlparse(metrics_json_uri)\n    s3 = boto3.client('s3',\
+          \ endpoint_url=\"http://minio-service.kubeflow:9000\", \n              \
+          \      aws_access_key_id=\"minio\", aws_secret_access_key=\"minio123\")\n\
+          \    s3.download_file(parsed.netloc, parsed.path.lstrip('/'), 'meta.json')\n\
+          \    with open('meta.json', 'r') as f:\n        meta = json.load(f)\n  \
+          \      metrics.log_metric(\"accuracy\", meta['metrics']['accuracy'])\n \
+          \       classification_metrics.log_confusion_matrix(['0','1','2','3','4','5','6','7','8','9'],\
+          \ meta['cmatrix'])\n    shutil.copy(\"meta.json\", metrics.path)\n    shutil.copy(\"\
+          meta.json\", classification_metrics.path)\n    os.remove(\"meta.json\")\n\
+          \n"
+        image: python:3.10-slim
+    exec-preprocessing:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocessing
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'numpy'  && \
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocessing(metrics : Output[Metrics], x_train_processed :\
+          \ Output[Dataset], x_test_processed: Output[Dataset],\n                \
+          \  x_train_artifact: Input[Dataset], x_test_artifact: Input[Dataset]):\n\
+          \    ''' \n    just reshape and normalize data\n    '''\n    import numpy\
+          \ as np\n    import os\n\n    # load data artifact store\n    x_train =\
+          \ np.load(x_train_artifact.path) \n    x_test = np.load(x_test_artifact.path)\n\
+          \n    # reshaping the data\n    # reshaping pixels in a 28x28px image with\
+          \ greyscale, canal = 1. This is needed for the Keras API\n    x_train =\
+          \ x_train.reshape(-1,28,28,1)\n    x_test = x_test.reshape(-1,28,28,1)\n\
+          \    # normalizing the data\n    # each pixel has a value between 0-255.\
+          \ Here we divide by 255, to get values from 0-1\n    x_train = x_train /\
+          \ 255\n    x_test = x_test / 255\n\n    #logging metrics using Kubeflow\
+          \ Artifacts\n    metrics.log_metric(\"Len x_train\", x_train.shape[0])\n\
+          \    metrics.log_metric(\"Len y_train\", x_test.shape[0])\n\n\n    # save\
+          \ feuture in artifact store\n    import shutil\n    np.save(\"tmp/x_train.npy\"\
+          ,x_train)\n    shutil.move(\"tmp/x_train.npy\", x_train_processed.path)\n\
+          \n    np.save(\"tmp/x_test.npy\",x_test)\n    shutil.move(\"tmp/x_test.npy\"\
+          , x_test_processed.path)\n\n"
+        image: python:3.10-slim
+pipelineInfo:
+  description: Detect digits
+  name: mnist-classifier-dev
+root:
+  dag:
+    tasks:
+      load-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-load-dataset
+        taskInfo:
+          name: load-dataset
+      model-building:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-building
+        taskInfo:
+          name: model-building
+      model-serving:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-serving
+        dependentTasks:
+        - model-training
+        inputs:
+          artifacts:
+            model_trained:
+              taskOutputArtifact:
+                outputArtifactKey: model_trained
+                producerTask: model-training
+        taskInfo:
+          name: model-serving
+      model-training:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-model-training
+        dependentTasks:
+        - load-dataset
+        - model-building
+        - preprocessing
+        inputs:
+          artifacts:
+            ml_model:
+              taskOutputArtifact:
+                outputArtifactKey: ml_model
+                producerTask: model-building
+            x_test_processed:
+              taskOutputArtifact:
+                outputArtifactKey: x_test_processed
+                producerTask: preprocessing
+            x_train_processed:
+              taskOutputArtifact:
+                outputArtifactKey: x_train_processed
+                producerTask: preprocessing
+            y_test_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: y_test_artifact
+                producerTask: load-dataset
+            y_train_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: y_train_artifact
+                producerTask: load-dataset
+          parameters:
+            hyperparameters:
+              componentInputParameter: hyperparameters
+            train_code_string:
+              runtimeValue:
+                constant: "def mnist_dist_train_logic():\n    import tensorflow as\
+                  \ tf\n    import numpy as np\n    import os, json, time\n    import\
+                  \ boto3\n    from urllib.parse import urlparse\n    from tensorflow\
+                  \ import keras\n    from sklearn.metrics import confusion_matrix\n\
+                  \n    # \u2500\u2500\u2500 S3 Helpers \u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\
+                  \    def get_s3_client():\n        return boto3.client(\n      \
+                  \      's3',\n            endpoint_url=os.getenv('S3_ENDPOINT'),\n\
+                  \            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),\n\
+                  \            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')\n\
+                  \        )\n\n    s3 = get_s3_client()\n\n    def download_s3(s3_uri,\
+                  \ local_path):\n        parsed = urlparse(s3_uri)\n        s3.download_file(parsed.netloc,\
+                  \ parsed.path.lstrip('/'), local_path)\n\n    def upload_s3(local_path,\
+                  \ s3_uri):\n        parsed = urlparse(s3_uri)\n        bucket, key\
+                  \ = parsed.netloc, parsed.path.lstrip('/')\n        if os.path.isdir(local_path):\n\
+                  \            for root, _, files in os.walk(local_path):\n      \
+                  \          for f in files:\n                    full_p = os.path.join(root,\
+                  \ f)\n                    rel_p = os.path.relpath(full_p, local_path)\n\
+                  \                    s3.upload_file(full_p, bucket, os.path.join(key,\
+                  \ rel_p))\n        else:\n            s3.upload_file(local_path,\
+                  \ bucket, key)\n\n    def s3_key_exists(s3_uri):\n        parsed\
+                  \ = urlparse(s3_uri)\n        try:\n            s3.head_object(Bucket=parsed.netloc,\
+                  \ Key=parsed.path.lstrip('/'))\n            return True\n      \
+                  \  except Exception:\n            return False\n\n    # \u2500\u2500\
+                  \u2500 1. Strategy & Role Identification \u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\
+                  \    strategy = tf.distribute.MultiWorkerMirroredStrategy()\n\n\
+                  \    tf_config = json.loads(os.environ.get('TF_CONFIG', '{}'))\n\
+                  \    task = tf_config.get('task', {})\n    task_type  = task.get('type',\
+                  \ 'worker')\n    task_index = task.get('index', 0)\n    is_chief\
+                  \   = (task_type == 'worker' and task_index == 0)\n\n    print(f'[INFO]\
+                  \ task_type={task_type} task_index={task_index} is_chief={is_chief}',\
+                  \ flush=True)\n\n    # \u2500\u2500\u2500 2. Load Data \u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \n\n    download_s3(os.environ['X_TRAIN_URI'], 'x_train.npy')\n\
+                  \    download_s3(os.environ['Y_TRAIN_URI'], 'y_train.npy')\n   \
+                  \ download_s3(os.environ['X_TEST_URI'],  'x_test.npy')\n    download_s3(os.environ['Y_TEST_URI'],\
+                  \  'y_test.npy')\n\n    x_train = np.load('x_train.npy').astype(np.float32)\n\
+                  \    y_train = np.load('y_train.npy').astype(np.int64)\n    x_test\
+                  \  = np.load('x_test.npy').astype(np.float32)\n    y_test  = np.load('y_test.npy').astype(np.int64)\n\
+                  \n    # \u2500\u2500\u2500 3. Distributed Datasets \u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\
+                  \    global_batch_size = 16 * strategy.num_replicas_in_sync\n\n\
+                  \    options = tf.data.Options()\n    options.experimental_distribute.auto_shard_policy\
+                  \ = tf.data.experimental.AutoShardPolicy.OFF\n\n    def make_train_ds():\n\
+                  \        def gen():\n            idx = np.random.permutation(len(x_train))\n\
+                  \            for i in range(0, len(idx) - global_batch_size, global_batch_size):\n\
+                  \                b = idx[i:i + global_batch_size]\n            \
+                  \    yield x_train[b], y_train[b]\n        return tf.data.Dataset.from_generator(\n\
+                  \            gen,\n            output_signature=(\n            \
+                  \    tf.TensorSpec(shape=(None, 28, 28, 1), dtype=tf.float32),\n\
+                  \                tf.TensorSpec(shape=(None,),           dtype=tf.int64),\n\
+                  \            )\n        ).prefetch(tf.data.AUTOTUNE)\n\n    def\
+                  \ make_test_ds():\n        def gen():\n            for i in range(0,\
+                  \ len(x_test), global_batch_size):\n                yield x_test[i:i\
+                  \ + global_batch_size], y_test[i:i + global_batch_size]\n      \
+                  \  return tf.data.Dataset.from_generator(\n            gen,\n  \
+                  \          output_signature=(\n                tf.TensorSpec(shape=(None,\
+                  \ 28, 28, 1), dtype=tf.float32),\n                tf.TensorSpec(shape=(None,),\
+                  \           dtype=tf.int64),\n            )\n        ).prefetch(tf.data.AUTOTUNE)\n\
+                  \n    # \u2500\u2500\u2500 4. Load & Compile Model Inside Strategy\
+                  \ Scope \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\n\n    download_s3(os.environ['MODEL_URI'], 'model.keras')\n\
+                  \n    with strategy.scope():\n        model = keras.models.load_model('model.keras')\n\
+                  \        model.compile(\n            optimizer=tf.keras.optimizers.SGD(learning_rate=float(os.environ['LEARNING_RATE'])),\n\
+                  \            loss='sparse_categorical_crossentropy',\n         \
+                  \   metrics=['accuracy']\n        )\n\n    # \u2500\u2500\u2500\
+                  \ 5. Train & Evaluate (Collective Ops) \u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\n\n    print(f'[INFO] task={task_index}\
+                  \ starting fit', flush=True)\n    model.fit(make_train_ds(), epochs=1,\
+                  \ verbose=1)\n    \n    print(f'[INFO] task={task_index} starting\
+                  \ eval', flush=True)\n    loss, acc = model.evaluate(make_test_ds(),\
+                  \ verbose=1)\n    print(f'[INFO] task={task_index} Eval \u2014 loss:\
+                  \ {loss:.4f}, accuracy: {acc:.4f}', flush=True)\n\n    # \u2500\u2500\
+                  \u2500 6. Post-Training & Sentinel Logic \u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+                  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\
+                  \    model_trained_uri = os.environ['TRAINED_MODEL_URI']\n    base_uri\
+                  \ = model_trained_uri.rsplit('/', 2)[0]\n    trained_model_uri =\
+                  \ model_trained_uri + '/1'\n    sentinel_uri = base_uri + '/chief_done.txt'\n\
+                  \    print(f'[INFO] base_uri={base_uri} sentinel_uri={sentinel_uri}\
+                  \ model_trained_uri={model_trained_uri}', flush=True)\n\n    if\
+                  \ is_chief:\n        # Save weights from the distributed model to\
+                  \ a temporary file\n        temp_weights = '/tmp/weights_sync.h5'\n\
+                  \        model.save_weights(temp_weights)\n        \n        # IMPORTANT:\
+                  \ Load a FRESH model outside the strategy scope.\n        # This\
+                  \ prevents model.predict() from trying to sync with workers.\n \
+                  \       with tf.device('/CPU:0'):\n            standalone_model\
+                  \ = keras.models.load_model('model.keras')\n            standalone_model.load_weights(temp_weights)\n\
+                  \            \n            print('[INFO] Chief: Exporting model\
+                  \ (standalone)...', flush=True)\n            base_export_dir = '/tmp/export'\n\
+                  \            version_dir = os.path.join(base_export_dir, '1')\n\
+                  \            os.makedirs(version_dir, exist_ok=True)\n         \
+                  \   # Export the model to version_dir (Keras 3)\n            standalone_model.export(version_dir)\n\
+                  \            # Upload all files in /tmp/export/1/ to S3\n      \
+                  \      upload_s3(version_dir, trained_model_uri)\n\n           \
+                  \ print('[INFO] Chief: Generating predictions (standalone)...',\
+                  \ flush=True)\n            y_pred_logits = standalone_model.predict(x_test,\
+                  \ batch_size=64, verbose=0)\n            y_pred = np.argmax(y_pred_logits,\
+                  \ axis=1)\n            cmatrix = confusion_matrix(y_test, y_pred).tolist()\n\
+                  \n        # Metrics and Metadata\n        metrics_data = {'accuracy':\
+                  \ float(acc), 'loss': float(loss)}\n        with open('meta.json',\
+                  \ 'w') as f:\n            json.dump({'metrics': metrics_data, 'cmatrix':\
+                  \ cmatrix}, f, indent=2)\n        upload_s3('meta.json', os.environ['METRICS_JSON_URI'])\n\
+                  \n        # Signal workers to exit\n        with open('/tmp/chief_done.txt',\
+                  \ 'w') as f:\n            f.write('done')\n        upload_s3('/tmp/chief_done.txt',\
+                  \ sentinel_uri)\n        print('[INFO] Chief: Sentinel uploaded.\
+                  \ All clear.', flush=True)\n\n    else:\n        # Polling logic\
+                  \ for workers\n        print(f'[INFO] task={task_index}: Waiting\
+                  \ for chief sentinel...', flush=True)\n        for attempt in range(150):\
+                  \ # ~5 minutes\n            if s3_key_exists(sentinel_uri):\n  \
+                  \              print(f'[INFO] task={task_index}: Sentinel found,\
+                  \ exiting.', flush=True)\n                break\n            time.sleep(2)\n\
+                  \        else:\n            print(f'[WARN] task={task_index}: Sentinel\
+                  \ timeout, exiting anyway.', flush=True)\n\n    print(f'[INFO] task={task_index}\
+                  \ Done.', flush=True)\n"
+        taskInfo:
+          name: model-training
+      preprocessing:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-preprocessing
+        dependentTasks:
+        - load-dataset
+        inputs:
+          artifacts:
+            x_test_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: x_test_artifact
+                producerTask: load-dataset
+            x_train_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: x_train_artifact
+                producerTask: load-dataset
+        taskInfo:
+          name: preprocessing
+  inputDefinitions:
+    parameters:
+      hyperparameters:
+        parameterType: STRUCT
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
