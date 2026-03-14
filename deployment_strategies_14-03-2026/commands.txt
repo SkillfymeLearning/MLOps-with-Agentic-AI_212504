@@ -1,0 +1,96 @@
+docker build -t mnist_tf:latest -f Dockerfile_model . && docker run -p 8787:8686 mnist_tf:latest
+uv add pre-commit
+uv add yq
+install kfp, kserve
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n monitoring --timeout=5m
+kubectl apply -f k8s/network.yaml
+Access Grafana local instance:
+
+  export POD_NAME=$(kubectl --namespace monitoring get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=monitoring" -oname)
+  kubectl --namespace monitoring port-forward $POD_NAME 3000
+kubectl --namespace monitoring get secrets monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 -d ; echo
+kubectl get networkpolicy -n kubeflow
+kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/monitor.yaml
+kubectl port-forward -n kubeflow svc/canary-digits-router 8686:8686
+
+rollback
+kubectl apply -f canary/stages/rollback.yaml
+kubectl delete isvc canary-digits-server-v2 -n kubeflow
+
+promote
+kubectl apply -f canary/stages/promote.yaml
+kubectl delete isvc canary-digits-server-v2 -n kubeflow
+
+# Quick check
+source canary/status.sh
+
+# Or just view the ConfigMap
+kubectl get configmap canary-state -n kubeflow -o yaml
+
+kubectl apply -f bluegreen/blue.yaml
+kubectl apply -f bluegreen/green.yaml
+kubectl apply -f bluegreen/service.yaml
+
+# Port-forward directly to green for testing
+kubectl port-forward svc/digits-server-green-predictor -n kubeflow 8687:8686
+
+source bluegreen/switch-to-green.sh
+
+
+
+
+
+# Deploy flow - apply ConfigMap only
+./scripts/test-staging-flow.sh staging --configmap-only
+
+# With sync from cluster first
+./scripts/test-staging-flow.sh --sync staging --configmap-only
+
+# Prod promote - apply ConfigMap only  
+./scripts/test-staging-flow.sh prod --configmap-only
+
+./scripts/test-staging-flow.sh --sync staging --configmap-only
+
+
+echo "# new version $(date +%s)" >> model/model.txt && git add model/model.txt && git commit -m "new model version"
+./scripts/test-staging-flow.sh --sync staging --configmap-only
+./scripts/test-staging-flow.sh --sync prod --configmap-only
+
+
+# Always check what would happen first
+./scripts/test-staging-flow.sh --sync staging --dry-run
+
+# Only apply if you see DEPLOY and want it
+./scripts/test-staging-flow.sh --sync staging --apply
+
+
+Condition	Action
+canary.sha == dev.sha	NO-OP (canary already deployed)
+dev.sha != stable.sha	DEPLOY (new model to test)
+dev.sha == stable.sha AND canary empty	NO-OP (already in sync)
+dev.sha == stable.sha AND canary exists	ROLLBACK (clear canary)
+
+digits-server-mirrored:80
+        │
+        ▼
+   mirror-proxy (nginx)
+        │
+        ├──► stable-digits-internal:8080 ──► canary-digits-server pods ──► Response
+        │
+        └──► shadow-digits-internal:8080 ──► shadow-digits-server pods ──► (discarded)
+
+kubectl rollout restart deployment mirror-proxy -n kubeflow
+
+for i in {1..20}; do 
+  curl -s -I http://localhost:8080/ -H "X-Session-ID: session-$i" | grep "X-AB-Variant"
+done | sort | uniq -c

@@ -1,0 +1,18 @@
+FROM python:3.10
+
+USER root
+
+RUN pip install --no-cache-dir \
+    boto3 \
+    tensorflow \
+    numpy \
+    kserve \
+    prometheus_client
+WORKDIR /app
+
+COPY server2.py /app/server.py
+COPY model /app/model/1/
+
+USER 1000
+
+ENTRYPOINT ["python", "/app/server.py"]
