@@ -1,0 +1,226 @@
+# .github/workflows/ml-canary.yml
+#
+# CI is purely a reader + applier:
+#   - reads config/ml-model-versions.yaml (written entirely by pre-push hook)
+#   - picks the right k8s template based on canary.weight + canary.sha
+#   - stamps image refs via envsubst
+#   - applies to cluster
+#   - never runs yq -i, never commits, never pushes
+#
+# The ConfigMap in the cluster is the only thing CI writes —
+# and the hook reads that back on the next dev push, closing the loop.
+
+name: ML Model Canary Pipeline
+
+on:
+  push:
+    branches: [dev]
+    paths: ["model/**", "Dockerfile.model", "config/ml-model-versions.yaml"]
+
+  pull_request:
+    types: [closed]
+    branches: [staging, prod]
+    paths: ["config/ml-model-versions.yaml"]
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - rollback
+          - prod
+      dry_run:
+        description: "Dry run (don't apply changes)"
+        required: false
+        default: false
+        type: boolean
+
+  # Reusable workflow - can be called from other repos
+  workflow_call:
+    inputs:
+      action:
+        description: "Action to perform: staging, rollback, prod"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (don't apply changes)"
+        required: false
+        default: false
+        type: boolean
+      registry:
+        description: "Container registry override"
+        required: false
+        type: string
+      namespace:
+        description: "Kubernetes namespace override"
+        required: false
+        default: "kubeflow"
+        type: string
+      config_path:
+        description: "Path to ml-model-versions.yaml"
+        required: false
+        default: "config/ml-model-versions.yaml"
+        type: string
+    secrets:
+      KUBECONFIG:
+        description: "Kubeconfig for cluster access"
+        required: false
+      SLACK_WEBHOOK:
+        description: "Slack webhook for notifications"
+        required: false
+
+env:
+  # Use inputs from workflow_call if available, otherwise use defaults
+  REGISTRY:    ${{ inputs.registry || 'registry.example.com/mnist_tf' }}
+  CONFIG:      ${{ inputs.config_path || 'config/ml-model-versions.yaml' }}
+  NS:          ${{ inputs.namespace || 'kubeflow' }}
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 1 — DEV: validate config, build image, test
+  # Hook already wrote dev.sha. CI just reads it.
+  # ───────────────────────────────────────────────────────────────────────────
+  dev-build-test:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
+
+      - name: Read dev.sha from config file
+        id: cfg
+        run: |
+          DEV_SHA=$(yq e '.dev.sha' ${{ env.CONFIG }})
+          [[ -z "${DEV_SHA}" || "${DEV_SHA}" == "null" ]] && \
+            echo "ERROR: dev.sha missing. Install pre-push hook: pre-commit install --hook-type pre-push" && \
+            exit 1
+          echo "dev_sha=${DEV_SHA}"     >> "$GITHUB_OUTPUT"
+          echo "dev_tag=sha-${DEV_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image tagged with dev.sha
+        run: |
+          docker build -f Dockerfile.model \
+            -t ${{ env.REGISTRY }}:${{ steps.cfg.outputs.dev_tag }} .
+          docker push ${{ env.REGISTRY }}:${{ steps.cfg.outputs.dev_tag }}
+
+      - name: Run model tests
+        run: |
+          docker run --rm \
+            ${{ env.REGISTRY }}:${{ steps.cfg.outputs.dev_tag }} \
+            python -m pytest tests/model/ -v --tb=short
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2 — STAGING: deploy or rollback using ci-deploy.sh
+  # ───────────────────────────────────────────────────────────────────────────
+  staging-apply:
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       github.base_ref == 'staging') ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.action == 'staging') ||
+      (github.event_name == 'workflow_call' &&
+       inputs.action == 'staging')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        id: deploy
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          NS: ${{ env.NS }}
+          CONFIG: ${{ env.CONFIG }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '0' }}
+        run: |
+          ARGS="staging"
+          if [[ "${{ inputs.dry_run || github.event.inputs.dry_run }}" == "true" ]]; then
+            ARGS="${ARGS} --dry-run"
+          fi
+          ./scripts/ci-deploy.sh ${ARGS}
+
+      - name: Notify Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK || secrets.SLACK_ML_OPS_WEBHOOK }}
+        run: echo "TODO: send Slack notification about staging deploy/rollback outcome"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2b — MANUAL ROLLBACK: force clear canary
+  # ───────────────────────────────────────────────────────────────────────────
+  manual-rollback:
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.action == 'rollback') ||
+      (github.event_name == 'workflow_call' &&
+       inputs.action == 'rollback')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Force rollback
+        id: rollback
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          NS: ${{ env.NS }}
+          CONFIG: ${{ env.CONFIG }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          ARGS="staging --rollback"
+          if [[ "${{ inputs.dry_run || github.event.inputs.dry_run }}" == "true" ]]; then
+            ARGS="${ARGS} --dry-run"
+          fi
+          ./scripts/ci-deploy.sh ${ARGS}
+
+      - name: Notify Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK || secrets.SLACK_ML_OPS_WEBHOOK }}
+        run: echo "TODO: send Slack notification about manual rollback outcome"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 3 — PROD: promote canary to stable using ci-deploy.sh
+  # ───────────────────────────────────────────────────────────────────────────
+  prod-promote:
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       github.base_ref == 'prod') ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.action == 'prod') ||
+      (github.event_name == 'workflow_call' &&
+       inputs.action == 'prod')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Promote to production
+        id: deploy
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          NS: ${{ env.NS }}
+          CONFIG: ${{ env.CONFIG }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '0' }}
+        run: |
+          ARGS="prod"
+          if [[ "${{ inputs.dry_run || github.event.inputs.dry_run }}" == "true" ]]; then
+            ARGS="${ARGS} --dry-run"
+          fi
+          ./scripts/ci-deploy.sh ${ARGS}
+
+      - name: Notify Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK || secrets.SLACK_ML_OPS_WEBHOOK }}
+        run: echo "TODO: send Slack notification about prod promotion outcome"
