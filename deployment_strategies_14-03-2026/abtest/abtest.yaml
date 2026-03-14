@@ -1,0 +1,245 @@
+# shadow/no-istio/ab-testing-proxy.yaml
+# curl -I http://digits-server-ab.kubeflow.svc.cluster.local -H "X-Session-ID: user-123"
+# Nginx proxy for A/B testing with configurable traffic split
+# Replaces mirror-proxy.yaml for A/B testing scenarios
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ab-proxy-config
+  namespace: kubeflow
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /tmp/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        log_format ab_testing '$remote_addr [$time_local] '
+                              '"$request" $status $body_bytes_sent '
+                              'backend=$backend_name '
+                              'upstream=$upstream_response_time ms '
+                              'split_value=$split_value';
+        
+        access_log /var/log/nginx/access.log ab_testing;
+        
+        # Stable backend (Version A)
+        upstream stable_backend {
+            server stable-digits-internal.kubeflow.svc.cluster.local:8686;
+            keepalive 32;
+        }
+        
+        # Shadow backend (Version B)
+        upstream shadow_backend {
+            server shadow-digits-internal.kubeflow.svc.cluster.local:8686;
+            keepalive 32;
+        }
+        
+        # Split module using split_clients for deterministic traffic split
+        # Hash based on remote_addr for sticky sessions per client
+        # Change the percentage (30%) to adjust A/B split
+        split_clients "${remote_addr}${http_x_session_id}" $backend_name {
+            70%     stable;   # 70% to stable (Version A)
+            *       shadow;   # 30% to shadow (Version B)
+        }
+        
+        map $backend_name $backend_upstream {
+            stable  "stable_backend";
+            shadow  "shadow_backend";
+        }
+        
+        server {
+            listen 8080;
+            server_name _;
+            
+            # Health endpoints
+            location /health {
+                access_log off;
+                return 200 'OK';
+            }
+            
+            location /ready {
+                access_log off;
+                return 200 'Ready';
+            }
+            
+            location /stub_status {
+                stub_status on;
+                access_log off;
+                allow 127.0.0.1;
+                deny all;
+            }
+
+            # Stable backend metrics
+            location /metrics/stable {
+                proxy_pass http://stable_backend/metrics;
+                proxy_set_header Host $host;
+            }
+
+            # Shadow backend metrics
+            location /metrics/shadow {
+                proxy_pass http://shadow_backend/metrics;
+                proxy_set_header Host $host;
+            }
+            
+            # A/B Testing endpoint - split traffic based on configuration
+            location / {
+                # Set variables for logging
+                set $split_value $backend_name;
+                
+                # Add A/B variant header to response
+                add_header X-AB-Variant $backend_name always;
+                
+                # Dynamic proxy pass based on split
+                proxy_pass http://$backend_upstream;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-AB-Variant $backend_name;
+                proxy_set_header Connection "";
+                
+                # Timeouts
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+                
+                # Buffering
+                proxy_buffering on;
+                proxy_buffer_size 8k;
+                proxy_buffers 16 8k;
+            }
+        }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ab-proxy
+  namespace: kubeflow
+  labels:
+    app: ab-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ab-proxy
+  template:
+    metadata:
+      labels:
+        app: ab-proxy
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: exporter
+          image: nginx/nginx-prometheus-exporter:1.0
+          args:
+            - -nginx.scrape-uri=http://localhost:8080/stub_status
+          ports:
+            - name: metrics
+              containerPort: 9113
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: tmp
+              mountPath: /tmp
+            - name: log
+              mountPath: /var/log/nginx
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: config
+          configMap:
+            name: ab-proxy-config
+        - name: tmp
+          emptyDir: {}
+        - name: log
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+---
+# Public endpoint for A/B tested traffic
+apiVersion: v1
+kind: Service
+metadata:
+  name: digits-server-ab
+  namespace: kubeflow
+  labels:
+    app: ab-proxy
+spec:
+  selector:
+    app: ab-proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+# Internal service to reach stable pods (Version A)
+apiVersion: v1
+kind: Service
+metadata:
+  name: stable-digits-internal
+  namespace: kubeflow
+  labels:
+    app: stable-digits-internal
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: canary-digits-server
+  ports:
+    - name: http
+      port: 8686
+      targetPort: 8686
+      protocol: TCP
+---
+# Internal service to reach shadow pods (Version B)
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadow-digits-internal
+  namespace: kubeflow
+  labels:
+    app: shadow-digits-internal
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: shadow-digits-server
+  ports:
+    - name: http
+      port: 8686
+      targetPort: 8686
+      protocol: TCP

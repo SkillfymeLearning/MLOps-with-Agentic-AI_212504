@@ -1,0 +1,101 @@
+
+# ## Explicit variant selection
+# curl -H "X-AB-Variant: shadow" http://digits-server-ab/predict
+
+# # Beta user routing
+# curl -H "X-User-Tier: beta" http://digits-server-ab/predict
+
+# # Regular user (percentage-based)
+# curl -H "X-User-ID: user123" http://digits-server-ab/predict
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ab-header-routing-config
+  namespace: kubeflow
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /tmp/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        log_format ab_header '$remote_addr [$time_local] '
+                             '"$request" $status '
+                             'backend=$backend_name '
+                             'header=$http_x_ab_variant '
+                             'user_id=$http_x_user_id';
+        
+        access_log /var/log/nginx/access.log ab_header;
+        
+        upstream stable_backend {
+            server stable-digits-internal.kubeflow.svc.cluster.local:8686;
+            keepalive 32;
+        }
+        
+        upstream shadow_backend {
+            server shadow-digits-internal.kubeflow.svc.cluster.local:8686;
+            keepalive 32;
+        }
+        
+        # Map header-based routing
+        map $http_x_ab_variant $backend_by_header {
+            "shadow"    shadow_backend;
+            "stable"    stable_backend;
+            default     "";
+        }
+        
+        # Map beta users to shadow
+        map $http_x_user_tier $backend_by_tier {
+            "beta"      shadow_backend;
+            "premium"   shadow_backend;
+            default     "";
+        }
+        
+        # Percentage-based fallback using user_id
+        split_clients "${http_x_user_id}${remote_addr}" $backend_by_split {
+            70%     stable_backend;
+            *       shadow_backend;
+        }
+        
+        server {
+            listen 8080;
+            
+            location /health { return 200 'OK'; }
+            location /ready { return 200 'Ready'; }
+            
+            location / {
+                # Priority: explicit header > tier > percentage split
+                set $backend_name "";
+                set $final_backend $backend_by_header;
+                
+                if ($final_backend = "") {
+                    set $final_backend $backend_by_tier;
+                }
+                
+                if ($final_backend = "") {
+                    set $final_backend $backend_by_split;
+                }
+                
+                # Determine backend name for logging
+                if ($final_backend = "shadow_backend") {
+                    set $backend_name "shadow";
+                }
+                if ($final_backend = "stable_backend") {
+                    set $backend_name "stable";
+                }
+                
+                add_header X-AB-Variant $backend_name always;
+                
+                proxy_pass http://$final_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-AB-Variant $backend_name;
+                proxy_set_header Connection "";
+            }
+        }
+    }
