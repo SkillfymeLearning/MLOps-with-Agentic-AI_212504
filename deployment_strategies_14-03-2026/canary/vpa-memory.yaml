@@ -1,0 +1,23 @@
+# vpa-auto.yaml
+# VPA in Auto mode - automatically adjusts pod resources
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: api-server-vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: canary-digits-server-predictor
+  updatePolicy:
+    updateMode: "Auto"  # "off" / Automatically apply recommendations
+    minReplicas: 2      # Keep at least 2 replicas running during updates
+  resourcePolicy:
+    containerPolicies:
+      - containerName: kserve-container
+        controlledResources:
+          - memory  # Only manage memory, not CPU
+        minAllowed:
+          memory: "3Gi"
+        maxAllowed:
+          memory: "4Gi"  # Adjust both requests and limits

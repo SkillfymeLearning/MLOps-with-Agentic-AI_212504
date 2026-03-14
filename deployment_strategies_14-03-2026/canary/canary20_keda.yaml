@@ -1,0 +1,73 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: canary-digits-server
+  namespace: kubeflow
+  annotations:
+    serving.kserve.io/revisionTag: "v1-stable"
+    sidecar.istio.io/inject: "false"
+    # serving.kserve.io/deploymentMode: RawDeployment
+    serving.kserve.io/deploymentMode: Standard
+    serving.kserve.io/autoscalerClass: keda
+  labels:
+    canary-group: digits-server
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 4
+    autoScaling:
+      metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: "Utilization"
+              averageUtilization: 50
+    containers:
+    - name: kserve-container
+      image: mnist_tf:v1
+      command: ["python", "/app/server.py"]
+      args: ["v1"]
+      ports:
+      - containerPort: 8686
+        name: mnist-port
+        protocol: TCP
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: canary-digits-server-v2
+  namespace: kubeflow
+  annotations:
+    serving.kserve.io/revisionTag: "v2-canary"
+    sidecar.istio.io/inject: "false"
+    serving.kserve.io/deploymentMode: RawDeployment
+  labels:
+    canary-group: digits-server
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+    - name: kserve-container
+      image: mnist_tf:v2
+      command: ["python", "/app/server.py"]
+      args: ["v2"]
+      ports:
+      - containerPort: 8686
+        name: mnist-port
+        protocol: TCP
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"

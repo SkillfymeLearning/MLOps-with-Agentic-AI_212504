@@ -1,0 +1,16 @@
+# canary-servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: canary-digits-router-metrics
+  namespace: kubeflow
+spec:
+  selector:
+    matchLabels:
+      app: canary-digits-router   # add this label to the router Service above
+  endpoints:
+  - port: mnist-port
+    interval: 15s
+    relabelings:                  # track which version each metric came from
+    - sourceLabels: [__meta_kubernetes_pod_label_serving_kserve_io_inferenceservice]
+      targetLabel: isvc_version
