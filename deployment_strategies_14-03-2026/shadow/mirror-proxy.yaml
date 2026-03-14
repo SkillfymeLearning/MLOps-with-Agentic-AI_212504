@@ -1,0 +1,241 @@
+# shadow/no-istio/mirror-proxy.yaml
+#
+# Nginx proxy for traffic mirroring (no Istio)
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mirror-proxy-config
+  namespace: kubeflow
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /tmp/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        log_format mirror '$remote_addr [$time_local] '
+                          '"$request" $status $body_bytes_sent '
+                          'upstream=$upstream_response_time ms';
+        
+        access_log /var/log/nginx/access.log mirror;
+        
+        # Stable backend (points to stable-internal service)
+        upstream stable_backend {
+            server stable-digits-internal.kubeflow.svc.cluster.local:8686;
+            keepalive 32;
+        }
+        
+        # Shadow backend (points to shadow-internal service)
+        upstream shadow_backend {
+            server shadow-digits-internal.kubeflow.svc.cluster.local:8686;
+            keepalive 16;
+        }
+        
+        server {
+            listen 8080;
+            server_name _;
+            
+            # Health endpoints
+            location /health {
+                access_log off;
+                return 200 'OK';
+            }
+            
+            location /ready {
+                access_log off;
+                return 200 'Ready';
+            }
+            location /stub_status {
+                stub_status on;
+                access_log off;
+                allow 127.0.0.1;
+                deny all;
+            }
+
+            # 2. Stable Upstream Metrics
+            location /metrics/stable {
+                proxy_pass http://stable_backend/metrics;
+                proxy_set_header Host $host;
+            }
+
+            # 3. Shadow Upstream Metrics
+            location /metrics/shadow {
+                proxy_pass http://shadow_backend/metrics;
+                proxy_set_header Host $host;
+            }
+            
+            # All traffic - mirror to shadow
+            location / {
+                # Enable mirroring
+                mirror /shadow_mirror;
+                mirror_request_body on;
+                
+                # Forward to stable
+                proxy_pass http://stable_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header Connection "";
+                
+                # Timeouts
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+                
+                # Buffering
+                proxy_buffering on;
+                proxy_buffer_size 8k;
+                proxy_buffers 16 8k;
+            }
+            
+            # Shadow mirror - fire and forget
+            location = /shadow_mirror {
+                internal;
+                
+                proxy_pass http://shadow_backend$request_uri;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Shadow-Request "true";
+                proxy_set_header Connection "";
+                
+                # Short timeouts
+                proxy_connect_timeout 1s;
+                proxy_send_timeout 5s;
+                proxy_read_timeout 5s;
+                
+                # Ignore errors
+                proxy_intercept_errors on;
+                error_page 500 502 503 504 = @ignore;
+            }
+            
+            location @ignore {
+                return 204;
+            }
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-proxy
+  namespace: kubeflow
+  labels:
+    app: nginx-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-proxy
+  template:
+    metadata:
+      labels:
+        app: nginx-proxy
+    spec:
+      containers:
+        - name: exporter
+          image: nginx/nginx-prometheus-exporter:1.0
+          args:
+            - -nginx.scrape-uri=http://localhost:8080/stub_status
+          ports:
+            - name: mnist-port # Match the port name here
+              containerPort: 9113
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: tmp
+              mountPath: /tmp
+            - name: log
+              mountPath: /var/log/nginx
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: config
+          configMap:
+            name: mirror-proxy-config
+        - name: tmp
+          emptyDir: {}
+        - name: log
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+---
+# Public endpoint for mirrored traffic
+apiVersion: v1
+kind: Service
+metadata:
+  name: digits-server-mirrored
+  namespace: kubeflow
+  labels:
+    app: mirror-proxy
+spec:
+  selector:
+    app: nginx-proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+# Internal service to reach stable pods (canary-digits-server)
+# Selects pods from your existing canary-digits-server InferenceService
+apiVersion: v1
+kind: Service
+metadata:
+  name: stable-digits-internal
+  namespace: kubeflow
+  labels:
+    app: stable-digits-internal
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: canary-digits-server
+  ports:
+    - name: http
+      port: 8686
+      targetPort: 8686
+      protocol: TCP
+---
+# Internal service to reach shadow pods
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadow-digits-internal
+  namespace: kubeflow
+  labels:
+    app: shadow-digits-internal
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: shadow-digits-server
+  ports:
+    - name: http
+      port: 8686
+      targetPort: 8686
+      protocol: TCP

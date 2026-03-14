@@ -1,0 +1,42 @@
+---
+# Scrape stable backend directly
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: stable-digits-metrics
+  namespace: kubeflow
+spec:
+  selector:
+    matchLabels:
+      app: stable-digits-internal
+  namespaceSelector:
+    matchNames:
+    - kubeflow
+  endpoints:
+  - port: http
+    interval: 15s
+    path: /metrics
+    relabelings:
+    - targetLabel: isvc_version
+      replacement: stable-production
+---
+# Scrape shadow backend directly
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: shadow-digits-metrics
+  namespace: kubeflow
+spec:
+  selector:
+    matchLabels:
+      app: shadow-digits-internal
+  namespaceSelector:
+    matchNames:
+    - kubeflow
+  endpoints:
+  - port: http
+    interval: 15s
+    path: /metrics
+    relabelings:
+    - targetLabel: isvc_version
+      replacement: shadow-production

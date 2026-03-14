@@ -1,0 +1,40 @@
+# shadow/no-istio/shadow-isvc.yaml
+#
+# Shadow InferenceService for no-istio setup
+#
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: shadow-digits-server
+  namespace: kubeflow
+  labels:
+    app: shadow-digits-server
+    deployment-type: shadow
+  annotations:
+    sidecar.istio.io/inject: "false"
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 2
+    containers:
+      - name: kserve-container
+        image: mnist_tf:v2
+        command: ["python", "/app/server.py"]
+        args: ["v2"]
+        ports:
+          - containerPort: 8686
+            name: mnist-port
+            protocol: TCP
+        env:
+          - name: DEPLOYMENT_TYPE
+            value: "shadow"
+          - name: LOG_PREDICTIONS
+            value: "true"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"

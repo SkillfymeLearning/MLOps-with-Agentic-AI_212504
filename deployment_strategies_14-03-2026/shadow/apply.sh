@@ -1,0 +1,1 @@
+kubectl apply -f shadow/mirror-proxy.yaml

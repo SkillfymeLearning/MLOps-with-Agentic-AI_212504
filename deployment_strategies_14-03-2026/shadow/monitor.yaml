@@ -1,0 +1,27 @@
+# canary-servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nginx-digits-router-metrics
+  namespace: kubeflow
+spec:
+  selector:
+    matchLabels:
+      app: mirror-proxy   # add this label to the router Service above
+  endpoints:
+  - port: http # Port 8080 on Nginx
+    path: /metrics/stable
+    interval: 15s
+    relabelings:                  # track which version each metric came from
+    - sourceLabels: [__meta_kubernetes_pod_label_serving_kserve_io_inferenceservice]
+      targetLabel: isvc_version
+      replacement: stable-production
+
+  # Endpoint 3: Scrape Shadow via Proxy
+  - port: http # Port 8080 on Nginx
+    path: /metrics/shadow
+    interval: 15s
+    relabelings:                  # track which version each metric came from
+    - sourceLabels: [__meta_kubernetes_pod_label_serving_kserve_io_inferenceservice]
+      targetLabel: isvc_version
+      replacement: shadow-production
