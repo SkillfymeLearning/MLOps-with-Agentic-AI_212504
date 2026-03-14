@@ -1,0 +1,28 @@
+# canary-state.yaml - ConfigMap to track current canary stage
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canary-state
+  namespace: default
+  labels:
+    app: digits-server
+data:
+  state.yaml: |
+    stable:
+      sha: ""
+      tag: ""
+      promoted_at: ""
+      promoted_by: ""
+    last_stable:
+      sha: ""
+      tag: ""
+      promoted_at: ""
+      promoted_by: ""
+    canary:
+      sha: ""
+      tag: ""
+      weight: 20
+    dev:
+      sha: ""
+      tag: ""
+    updated_at: ""

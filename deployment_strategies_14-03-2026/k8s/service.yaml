@@ -1,0 +1,16 @@
+# canary-router-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: canary-digits-router
+  namespace: kubeflow
+  labels:
+    app: canary-digits-router
+spec:
+  selector:
+    canary-group: digits-server   # matches pods from both ISVCs
+  ports:
+  - name: mnist-port
+    port: 8686
+    targetPort: 8686
+    protocol: TCP

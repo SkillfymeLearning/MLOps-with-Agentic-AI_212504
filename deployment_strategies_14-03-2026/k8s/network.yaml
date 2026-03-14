@@ -1,0 +1,26 @@
+# allow-prometheus-scrape.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: kubeflow
+spec:
+  podSelector:
+    matchLabels:
+      canary-group: digits-server
+      app: nginx-proxy
+
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring  # adjust to your prometheus namespace
+  - from:
+    - podSelector: {}
+    ports:
+    - port: 8686
+      protocol: TCP
+    - port: 8080
+      protocol: TCP
+    - port: 80
+      protocol: TCP
