@@ -1,0 +1,30 @@
+# Example: .github/workflows/rollback.yaml (in YOUR repo)
+#
+# Quick rollback workflow that calls the reusable ci.yaml
+# Copy this file to your repository's .github/workflows/ directory.
+
+name: Rollback Canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (preview only)"
+        required: false
+        default: false
+        type: boolean
+      reason:
+        description: "Rollback reason"
+        required: false
+        default: "Manual rollback"
+        type: string
+
+jobs:
+  rollback:
+    uses: ksarma/hpa-mlops/.github/workflows/ci.yaml@main
+    with:
+      action: "rollback"
+      dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+    secrets:
+      KUBECONFIG: ${{ secrets.KUBECONFIG }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

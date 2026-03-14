@@ -1,0 +1,77 @@
+# Example: .github/workflows/ml-pipeline.yaml (in YOUR repo)
+#
+# Full ML pipeline that calls reusable ci.yaml on different triggers.
+# Copy this file to your repository's .github/workflows/ directory.
+
+name: ML Pipeline
+
+on:
+  # Deploy to staging when PR merges to staging branch
+  pull_request:
+    types: [closed]
+    branches: [staging, prod]
+    paths: ["config/ml-model-versions.yaml"]
+
+  # Manual triggers
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - rollback
+          - prod
+      dry_run:
+        description: "Dry run (preview only)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Staging deploy on PR merge
+  # ─────────────────────────────────────────────────────────────────────────
+  staging-on-merge:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.base_ref == 'staging'
+    uses: ksarma/hpa-mlops/.github/workflows/ci.yaml@main
+    with:
+      action: "staging"
+      dry_run: false
+    secrets:
+      KUBECONFIG: ${{ secrets.KUBECONFIG }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Prod promote on PR merge
+  # ─────────────────────────────────────────────────────────────────────────
+  prod-on-merge:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.base_ref == 'prod'
+    uses: ksarma/hpa-mlops/.github/workflows/ci.yaml@main
+    with:
+      action: "prod"
+      dry_run: false
+    secrets:
+      KUBECONFIG: ${{ secrets.KUBECONFIG }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Manual dispatch
+  # ─────────────────────────────────────────────────────────────────────────
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ksarma/hpa-mlops/.github/workflows/ci.yaml@main
+    with:
+      action: ${{ github.event.inputs.action }}
+      dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+    secrets:
+      KUBECONFIG: ${{ secrets.KUBECONFIG }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
