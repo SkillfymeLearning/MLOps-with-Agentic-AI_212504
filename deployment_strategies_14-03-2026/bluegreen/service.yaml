@@ -1,0 +1,17 @@
+# service.yaml - Switch traffic by changing the "version" selector
+apiVersion: v1
+kind: Service
+metadata:
+  name: digits-server
+  namespace: kubeflow
+  labels:
+    app: digits-server
+spec:
+  selector:
+    app: digits-server
+    version: blue          # <-- Change to "green" to switch traffic
+  ports:
+  - name: mnist-port
+    port: 8686
+    targetPort: 8686
+    protocol: TCP

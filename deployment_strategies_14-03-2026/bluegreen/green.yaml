@@ -1,0 +1,32 @@
+# green.yaml (new version to test)
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: digits-server-green
+  namespace: kubeflow
+  annotations:
+    sidecar.istio.io/inject: "false"
+    serving.kserve.io/deploymentMode: RawDeployment
+  labels:
+    app: digits-server
+    version: green
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 2
+    containers:
+    - name: kserve-container
+      image: mnist_tf:v2
+      command: ["python", "/app/server.py"]
+      args: ["v2"]
+      ports:
+      - containerPort: 8686
+        name: mnist-port
+        protocol: TCP
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
